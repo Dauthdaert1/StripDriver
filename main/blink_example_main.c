@@ -6,7 +6,6 @@
 #include "led_strip.h"
 #include "sdkconfig.h"
 #include "lvgl.h"
-#include "lvgl_helpers.h"
 
 /* Use project configuration menu (idf.py menuconfig) to choose the GPIO to blink,
    or you can edit the following line and set a number here.
