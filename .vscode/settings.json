@@ -24,6 +24,7 @@
         "sdkconfig.h": "c",
         "lvgl.h": "c",
         "led_strip.h": "c",
-        "display_driver.h": "c"
+        "display_driver.h": "c",
+        "stdbool.h": "c"
     }
 }

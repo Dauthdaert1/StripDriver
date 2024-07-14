@@ -35,6 +35,7 @@ led_strip_spi_config_t spi_config = {
 
 void app_main(void)
 {
+    GC9A01_init();
     ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
     while (true)
     {

@@ -1,124 +1,253 @@
+/**
+ * @file display_driver.c
+ *	Modified from: https://github.com/lvgl/lvgl_esp32_drivers/blob/9fed1cc47b5a45fec6bae08b55d2147d3b50260c/lvgl_tft/disp_driver.c
+ */
+
+/*********************
+ *      INCLUDES
+ *********************/
 #include "display_driver.h"
-#include "lvgl.h"
+#include "disp_spi.h"
 #include "driver/gpio.h"
-#include "driver/spi_master.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
-#define TAG "GC9A01"
+/*********************
+ *      DEFINES
+ *********************/
+ #define TAG "GC9A01"
 
-spi_device_handle_t spi;
+/**********************
+ *      TYPEDEFS
+ **********************/
 
-// GC9A01 Initialization Sequence
-static const uint8_t init_cmd[] = {
-  GC9A01A_INREGEN2, 0,
-  0xEB, 1, 0x14, // ?
-  GC9A01A_INREGEN1, 0,
-  GC9A01A_INREGEN2, 0,
-  0xEB, 1, 0x14, // ?
-  0x84, 1, 0x40, // ?
-  0x85, 1, 0xFF, // ?
-  0x86, 1, 0xFF, // ?
-  0x87, 1, 0xFF, // ?
-  0x88, 1, 0x0A, // ?
-  0x89, 1, 0x21, // ?
-  0x8A, 1, 0x00, // ?
-  0x8B, 1, 0x80, // ?
-  0x8C, 1, 0x01, // ?
-  0x8D, 1, 0x01, // ?
-  0x8E, 1, 0xFF, // ?
-  0x8F, 1, 0xFF, // ?
-  0xB6, 2, 0x00, 0x00, // ?
-  GC9A01A_MADCTL, 1, MADCTL_MX | MADCTL_BGR,
-  GC9A01A_COLMOD, 1, 0x05,
-  0x90, 4, 0x08, 0x08, 0x08, 0x08, // ?
-  0xBD, 1, 0x06, // ?
-  0xBC, 1, 0x00, // ?
-  0xFF, 3, 0x60, 0x01, 0x04, // ?
-  GC9A01A1_POWER2, 1, 0x13,
-  GC9A01A1_POWER3, 1, 0x13,
-  GC9A01A1_POWER4, 1, 0x22,
-  0xBE, 1, 0x11, // ?
-  0xE1, 2, 0x10, 0x0E, // ?
-  0xDF, 3, 0x21, 0x0c, 0x02, // ?
-  GC9A01A_GAMMA1, 6, 0x45, 0x09, 0x08, 0x08, 0x26, 0x2A,
-  GC9A01A_GAMMA2, 6, 0x43, 0x70, 0x72, 0x36, 0x37, 0x6F,
-  GC9A01A_GAMMA3, 6, 0x45, 0x09, 0x08, 0x08, 0x26, 0x2A,
-  GC9A01A_GAMMA4, 6, 0x43, 0x70, 0x72, 0x36, 0x37, 0x6F,
-  0xED, 2, 0x1B, 0x0B, // ?
-  0xAE, 1, 0x77, // ?
-  0xCD, 1, 0x63, // ?
-  // Unsure what this line (from manufacturer's boilerplate code) is
-  // meant to do, but users reported issues, seems to work OK without:
-  //0x70, 9, 0x07, 0x07, 0x04, 0x0E, 0x0F, 0x09, 0x07, 0x08, 0x03, // ?
-  GC9A01A_FRAMERATE, 1, 0x34,
-  0x62, 12, 0x18, 0x0D, 0x71, 0xED, 0x70, 0x70, // ?
-            0x18, 0x0F, 0x71, 0xEF, 0x70, 0x70,
-  0x63, 12, 0x18, 0x11, 0x71, 0xF1, 0x70, 0x70, // ?
-            0x18, 0x13, 0x71, 0xF3, 0x70, 0x70,
-  0x64, 7, 0x28, 0x29, 0xF1, 0x01, 0xF1, 0x00, 0x07, // ?
-  0x66, 10, 0x3C, 0x00, 0xCD, 0x67, 0x45, 0x45, 0x10, 0x00, 0x00, 0x00, // ?
-  0x67, 10, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x01, 0x54, 0x10, 0x32, 0x98, // ?
-  0x74, 7, 0x10, 0x85, 0x80, 0x00, 0x00, 0x4E, 0x00, // ?
-  0x98, 2, 0x3e, 0x07, // ?
-  GC9A01A_TEON, 0,
-  GC9A01A_INVON, 0,
-  GC9A01A_SLPOUT, 0x80, // Exit sleep
-  GC9A01A_DISPON, 0x80, // Display on
-  0x00                  // End of list
-};
+/*The LCD needs a bunch of command/argument values to be initialized. They are stored in this struct. */
+typedef struct {
+    uint8_t cmd;
+    uint8_t data[16];
+    uint8_t databytes; //No of data in data; bit 7 = delay after set; 0xFF = end of cmds.
+} lcd_init_cmd_t;
 
-// Function to send data over SPI
-static void lcd_spi_send_data(const uint8_t *data, int len) {
-    spi_transaction_t t;
-    memset(&t, 0, sizeof(t));
-    t.length = len * 8;        // Length is in bits
-    t.tx_buffer = data;        // Data
-    spi_device_transmit(spi, &t);  // Transmit data
+/**********************
+ *  STATIC PROTOTYPES
+ **********************/
+static void GC9A01_set_orientation(uint8_t orientation);
+
+static void GC9A01_send_cmd(uint8_t cmd);
+static void GC9A01_send_data(void * data, uint16_t length);
+static void GC9A01_send_color(void * data, uint16_t length);
+
+/**********************
+ *  STATIC VARIABLES
+ **********************/
+
+/**********************
+ *      MACROS
+ **********************/
+
+/**********************
+ *   GLOBAL FUNCTIONS
+ **********************/
+
+void display_init(void)
+{
+	lcd_init_cmd_t GC_init_cmds[]={
+////////////////////////////////////////////
+		{0xEF, {0}, 0},
+		{0xEB, {0x14}, 1},
+
+		{0xFE, {0}, 0},
+		{0xEF, {0}, 0},
+
+		{0xEB, {0x14}, 1},
+		{0x84, {0x40}, 1},
+		{0x85, {0xFF}, 1},
+		{0x86, {0xFF}, 1},
+		{0x87, {0xFF}, 1},
+		{0x88, {0x0A}, 1},
+		{0x89, {0x21}, 1},
+		{0x8A, {0x00}, 1},
+		{0x8B, {0x80}, 1},
+		{0x8C, {0x01}, 1},
+		{0x8D, {0x01}, 1},
+		{0x8E, {0xFF}, 1},
+		{0x8F, {0xFF}, 1},
+		{0xB6, {0x00, 0x20}, 2},
+		//call orientation
+		{0x3A, {0x05}, 1},
+		{0x90, {0x08, 0x08, 0X08, 0X08}, 4},
+		{0xBD, {0x06}, 1},
+		{0xBC, {0x00}, 1},
+		{0xFF, {0x60, 0x01, 0x04}, 3},
+		{0xC3, {0x13}, 1},
+		{0xC4, {0x13}, 1},
+		{0xC9, {0x22}, 1},
+		{0xBE, {0x11}, 1},
+		{0xE1, {0x10, 0x0E}, 2},
+		{0xDF, {0x21, 0x0C, 0x02}, 3},
+		{0xF0, {0x45, 0x09, 0x08, 0x08, 0x26, 0x2A}, 6},
+		{0xF1, {0x43, 0x70, 0x72, 0x36, 0x37, 0x6F}, 6},
+		{0xF2, {0x45, 0x09, 0x08, 0x08, 0x26, 0x2A}, 6},
+		{0xF3, {0x43, 0x70, 0x72, 0x36, 0x37, 0x6F}, 6},
+		{0xED, {0x1B, 0x0B}, 2},
+		{0xAE, {0x77}, 1},
+		{0xCD, {0x63}, 1},
+		{0x70, {0x07, 0x07, 0x04, 0x0E, 0x0F, 0x09, 0x07, 0X08, 0x03}, 9},
+		{0xE8, {0x34}, 1},
+		{0x62, {0x18, 0x0D, 0x71, 0xED, 0x70, 0x70, 0x18, 0X0F, 0x71, 0xEF, 0x70, 0x70}, 12},
+		{0x63, {0x18, 0x11, 0x71, 0xF1, 0x70, 0x70, 0x18, 0X13, 0x71, 0xF3, 0x70, 0x70}, 12},
+		{0x64, {0x28, 0x29, 0xF1, 0x01, 0xF1, 0x00, 0x07}, 7},
+		{0x66, {0x3C, 0x00, 0xCD, 0x67, 0x45, 0x45, 0x10, 0X00, 0x00, 0x00}, 10},
+		{0x67, {0x00, 0x3C, 0x00, 0x00, 0x00, 0x01, 0x54, 0X10, 0x32, 0x98}, 10},
+		{0x74, {0x10, 0x85, 0x80, 0x00, 0x00, 0x4E, 0x00}, 7},
+		{0x98, {0x3E, 0x07}, 2},
+		{0x35, {0}, 0},
+		{0x21, {0}, 0},
+		{0x11, {0}, 0x80},	//0x80 delay flag
+		{0x29, {0}, 0x80},	//0x80 delay flag
+		{0, {0}, 0xff},		//init end flag
+////////////////////////////////////////////
+
+	};
+
+#if GC9A01_BCKL == 15
+	gpio_config_t io_conf;
+    io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = GPIO_SEL_15;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&io_conf);
+#endif
+
+	//Initialize non-SPI GPIOs
+    gpio_reset_pin(GC9A01_DC);
+	gpio_set_direction(GC9A01_DC, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(GC9A01_RST);
+	gpio_set_direction(GC9A01_RST, GPIO_MODE_OUTPUT);
+	gpio_reset_pin(GC9A01_BCKL);
+    gpio_set_direction(GC9A01_BCKL, GPIO_MODE_OUTPUT);
+
+	//Reset the display
+	gpio_set_level(GC9A01_RST, 0);
+	vTaskDelay(100 / portTICK_PERIOD_MS);
+	gpio_set_level(GC9A01_RST, 1);
+	vTaskDelay(100 / portTICK_PERIOD_MS);
+
+	ESP_LOGI(TAG, "Initialization.");
+
+	//Send all the commands
+	uint16_t cmd = 0;
+	while (GC_init_cmds[cmd].databytes!=0xff) {
+		GC9A01_send_cmd(GC_init_cmds[cmd].cmd);
+		GC9A01_send_data(GC_init_cmds[cmd].data, GC_init_cmds[cmd].databytes&0x1F);
+		if (GC_init_cmds[cmd].databytes & 0x80) {
+			vTaskDelay(100 / portTICK_PERIOD_MS);
+		}
+		cmd++;
+	}
+
+	GC9A01_enable_backlight(true);
+
+	GC9A01_set_orientation("LANDSCAPE");
+
+#if GC9A01_INVERT_COLORS == 1
+	GC9A01_send_cmd(0x21);
+#else
+	GC9A01_send_cmd(0x20);
+#endif
 }
 
-/** 
- * Configures GPIO and runs commands to initalize LCD screen
-*/
-void LCD_Init(display_spi_config_t* display_pins){
-    esp_err_t ret;
 
-    // SPI Bus Configuration
-    spi_bus_config_t bus_cfg = {
-        .miso_io_num = -1,      // MISO not used
-        .mosi_io_num = display_pins->GPIO_SDA,
-        .sclk_io_num = display_pins->GPIO_SCL,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 320 * 240 * 2 + 8,
-    };
+void display_flush(const lv_area_t * area, lv_color_t * color_map)
+{
+	uint8_t data[4];
 
-    // Device Configuration
-    spi_device_interface_config_t dev_cfg = {
-        .clock_speed_hz = 10 * 1000 * 1000,      // Clock out at 10 MHz
-        .mode = 0,                               // SPI mode 0
-        .spics_io_num = display_pins->GPIO_CSX,  // CS pin
-        .queue_size = 7,                         // 7 transactions at a time
-    };
+	/*Column addresses*/
+	GC9A01_send_cmd(0x2A);				//0x2A 
+	data[0] = (area->x1 >> 8) & 0xFF;
+	data[1] = area->x1 & 0xFF;
+	data[2] = (area->x2 >> 8) & 0xFF;
+	data[3] = area->x2 & 0xFF;
+	GC9A01_send_data(data, 4);
 
-    // Initialize SPI bus
-    ret = spi_bus_initialize(HSPI_HOST, &bus_cfg, 1);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize SPI bus (%d)", ret);
-        return ret;
-    }
+	/*Page addresses*/
+	GC9A01_send_cmd(0x2B);				//0x2B 
+	data[0] = (area->y1 >> 8) & 0xFF;
+	data[1] = area->y1 & 0xFF;
+	data[2] = (area->y2 >> 8) & 0xFF;
+	data[3] = area->y2 & 0xFF;
+	GC9A01_send_data(data, 4);
 
-    // Send initialization commands
-    for (int i = 0; i < sizeof(init_cmd) / sizeof(init_cmd[0]); i++) {
-        uint8_t cmd = init_cmd[i];
-    }
+	/*Memory write*/
+	GC9A01_send_cmd(0x2C);				//0x2C 
 
-    ESP_LOGI(TAG, "GC9A01 initialized successfully");
-    return ESP_OK;
+
+	uint32_t size = lv_area_get_width(area) * lv_area_get_height(area);
+
+	GC9A01_send_color((void*)color_map, size * 2);
 }
 
-/** 
- * Configures GPIO and runs commands to initalize LCD touch screen
-*/
-void LCD_Touch_Init(void){
+void display_enable_backlight(bool backlight)
+{
+	gpio_set_level(GC9A01_BCKL, backlight);
+}
 
+void display_sleep_in()
+{
+	uint8_t data[] = {0x08};
+	GC9A01_send_cmd(0x10);			//0x10 Enter Sleep Mode
+	GC9A01_send_data(&data, 1);		
+}
+
+void display_sleep_out()
+{
+	uint8_t data[] = {0x08};
+	GC9A01_send_cmd(0x11);		    //0x11 Sleep OUT
+	GC9A01_send_data(&data, 1);
+}
+
+/**********************
+ *   STATIC FUNCTIONS
+ **********************/
+
+
+static void GC9A01_send_cmd(uint8_t cmd)
+{
+    disp_wait_for_pending_transactions();
+    gpio_set_level(GC9A01_DC, 0);	 /*Command mode*/
+    disp_spi_send_data(&cmd, 1);
+}
+
+static void GC9A01_send_data(void * data, uint16_t length)
+{
+    disp_wait_for_pending_transactions();
+    gpio_set_level(GC9A01_DC, 1);	 /*Data mode*/
+    disp_spi_send_data(data, length);
+}
+
+static void GC9A01_send_color(void * data, uint16_t length)
+{
+    disp_wait_for_pending_transactions();
+    gpio_set_level(GC9A01_DC, 1);   /*Data mode*/
+    disp_spi_send_colors(data, length);
+}
+
+static void GC9A01_set_orientation(uint8_t orientation)
+{
+    // ESP_ASSERT(orientation < 4);
+
+    const char *orientation_str[] = {
+        "PORTRAIT", "PORTRAIT_INVERTED", "LANDSCAPE", "LANDSCAPE_INVERTED"
+    };
+
+    ESP_LOGI(TAG, "Display orientation: %s", orientation_str[orientation]);
+
+    uint8_t data[] = {0x08, 0xC8, 0x68, 0xA8};
+
+    ESP_LOGI(TAG, "0x36 command value: 0x%02X", data[orientation]);
+
+    GC9A01_send_cmd(0x36);
+    GC9A01_send_data((void *) &data[orientation], 1);
 }

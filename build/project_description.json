@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "StripExample",
-    "project_version":    "a7bd2dd-dirty",
+    "project_version":    "ce4ded0-dirty",
     "project_path":       "A:/ESP32Projects/StripExample",
     "idf_path":           "A:/esp/v5.2.2/esp-idf",
     "build_dir":          "A:/ESP32Projects/StripExample/build",
