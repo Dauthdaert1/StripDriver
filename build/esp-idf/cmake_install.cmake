@@ -419,7 +419,7 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("A:/ESP32Projects/StripExample/build/esp-idf/display_driver/cmake_install.cmake")
+  include("A:/ESP32Projects/StripExample/build/esp-idf/lvgl_esp32_drivers/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)

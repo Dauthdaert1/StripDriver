@@ -1,3 +1,3 @@
 idf_component_register(SRCS "blink_example_main.c"
                        INCLUDE_DIRS "."
-                       REQUIRES lvgl display_driver)
+                       REQUIRES lvgl lvgl_esp32_drivers)

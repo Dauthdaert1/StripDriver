@@ -5,4 +5,4 @@ cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(StripExample)
 
-list(APPEND EXTRA_COMPONENT_DIRS "components/display_driver")
+list(APPEND EXTRA_COMPONENT_DIRS "components/lvgl_esp32_drivers")

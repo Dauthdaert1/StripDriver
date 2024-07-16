@@ -25,6 +25,7 @@
         "lvgl.h": "c",
         "led_strip.h": "c",
         "display_driver.h": "c",
-        "stdbool.h": "c"
+        "stdbool.h": "c",
+        "gpio.h": "c"
     }
 }
