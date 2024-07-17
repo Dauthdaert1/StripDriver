@@ -6,9 +6,14 @@
 #include "esp_log.h"
 #include "lvgl.h"
 
+// Frame buffer 1/5th the size of screen to reduce ram
+#define BUFFER_SIZE 2*240*240/5
+
 spi_device_handle_t spi;
 lv_display_t * display;
 static const char *TAG = "DISPLAY_DRIVER";
+
+static uint8_t frame_buffer[BUFFER_SIZE]; 
 
 //static const uint32_t width = 240;
 //static const uint32_t height = 240;
@@ -24,6 +29,27 @@ static void spi_send_cmd(uint8_t cmd);
 static void spi_send_data(void * data, uint32_t size);
 static void disp_spi_send_data(void * data, uint32_t size);
 
+//https://docs.lvgl.io/master/porting/display.html#flush-cb
+void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_map){
+    ESP_LOGI(TAG, "FLUSH running, X1: %ld, X2: %ld, Y1: %ld, Y2: %ld", area->x1, area->x2, area->y1, area->y2);
+    uint16_t * buf16 = (uint16_t *)px_map;
+
+    spi_send_cmd(0x2A);
+    uint8_t data_x[4] = {0, area->x1, 0, area->x2};
+    spi_send_data(data_x, 4);
+
+    spi_send_cmd(0x2B);
+    uint8_t data_y[4] = {0, area->y1, 0, area->y2};
+    ESP_LOGI(TAG, "pos %u", ((uint8_t*)&data_y)[2]);
+    spi_send_data(data_y, 4);
+
+    spi_send_cmd(0x2C);
+    ESP_LOGI(TAG, "Size %u", BUFFER_SIZE);
+    spi_send_data(px_map, BUFFER_SIZE);
+
+    lv_display_flush_ready(display);
+}
+
 void init_display(){
     esp_err_t ret;
 
@@ -34,7 +60,7 @@ void init_display(){
         .sclk_io_num = PIN_NUM_CLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 4096,
+        .max_transfer_sz = sizeof(frame_buffer),
     };
 
     // Initialize the SPI bus
@@ -43,7 +69,7 @@ void init_display(){
 
     // Configuration for the SPI device on the bus
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 10 * 1000 * 1000, // Clock out at 10 MHz
+        .clock_speed_hz = 40 * 1000 * 1000, // Clock out at 80 MHz
         .mode = 0,                          // SPI mode 0
         .spics_io_num = PIN_NUM_CS,         // CS pin
         .queue_size = 7,                    // Transaction queue size
@@ -147,23 +173,8 @@ void init_display(){
 
     //Connect to LVGL
     display = lv_display_create(240, 240);
-}
-
-void display_flush(lv_display_t * display, const lv_area_t * area, void * px_map){
-    uint16_t * buf16 = (uint16_t *)px_map;
-
-    spi_send_cmd(0x2A);
-    uint16_t data_x[2] = {area->x1, area->x2};
-    spi_send_data(&data_x, 4);
-
-    spi_send_cmd(0x2B);
-    uint16_t data_y[2] = {area->y1, area->y2};
-    spi_send_data(&data_y, 4);
-
-    spi_send_cmd(0x2C);
-    spi_send_data(&px_map, (area->x2-area->x1)*(area->y2-area->y1)*2);
-
-    //lv_display_flush_ready(disp);
+    lv_display_set_flush_cb(display, display_flush_cb);
+    lv_display_set_buffers(display, frame_buffer, NULL, sizeof(frame_buffer), LV_DISPLAY_RENDER_MODE_PARTIAL); //TODO: Second buffer for drawing while DMA SPI works, add later
 }
 
 void test1(){
