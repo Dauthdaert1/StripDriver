@@ -62,6 +62,6 @@ A:/ESP32Projects/StripExample/build/esp-idf/perfmon/libperfmon.a
 A:/ESP32Projects/StripExample/build/esp-idf/spiffs/libspiffs.a
 A:/ESP32Projects/StripExample/build/esp-idf/wifi_provisioning/libwifi_provisioning.a
 A:/ESP32Projects/StripExample/build/esp-idf/lvgl__lvgl/liblvgl__lvgl.a
-A:/ESP32Projects/StripExample/build/esp-idf/lvgl_esp32_drivers/liblvgl_esp32_drivers.a
+A:/ESP32Projects/StripExample/build/esp-idf/display_drivers/libdisplay_drivers.a
 A:/ESP32Projects/StripExample/build/esp-idf/espressif__led_strip/libespressif__led_strip.a
 A:/ESP32Projects/StripExample/build/esp-idf/main/libmain.a

@@ -26,6 +26,12 @@
         "led_strip.h": "c",
         "display_driver.h": "c",
         "stdbool.h": "c",
-        "gpio.h": "c"
+        "gpio.h": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c",
+        "span": "c",
+        "bitset": "c",
+        "regex": "c"
     }
 }
