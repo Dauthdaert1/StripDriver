@@ -9,8 +9,7 @@
 spi_device_handle_t spi;
 lv_display_t * display;
 static const char *TAG = "DISPLAY_DRIVER";
-
-static uint8_t frame_buffer[BUFFER_SIZE]; 
+static uint8_t queue_cnt;
 
 /**
  * Used for initalization commands
@@ -27,6 +26,8 @@ typedef struct {
 static void spi_send_cmd(uint8_t cmd);
 static void spi_send_data(void * data, uint32_t size);
 static void disp_spi_send_data(void * data, uint32_t size);
+static void spi_send_data_async(void * data, uint32_t size);
+static void spi_wait_queued();
 
 /** 
  * Must be called to initialize connection with GC9A01 LCD controller before it can be used.
@@ -43,7 +44,7 @@ void init_display(){
         .sclk_io_num = PIN_NUM_CLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = sizeof(frame_buffer),
+        .max_transfer_sz = BUFFER_SIZE,
     };
 
     // Initialize the SPI bus
@@ -165,30 +166,30 @@ void init_display(){
     //Connect to LVGL
     display = lv_display_create(240, 240);
     lv_display_set_flush_cb(display, display_flush_cb);
-    lv_display_set_buffers(display, frame_buffer, NULL, sizeof(frame_buffer), LV_DISPLAY_RENDER_MODE_PARTIAL); //TODO: Second buffer for drawing while DMA SPI works, add later
+
+    uint8_t* dma_buffer1 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
+    uint8_t* dma_buffer2 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
+    lv_display_set_buffers(display, dma_buffer1, dma_buffer2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL); //TODO: Second buffer for drawing while DMA SPI works, add later
 }
 
 /**
  * Implementation of function to print the buffer in px_map to the display to be called by LVGL
  * Following implementation in: https://docs.lvgl.io/master/porting/display.html#flush-cb
- * TODO: Switch to non-blocking SPI setup so LVGL can work during flush
  */
 void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_map){
     //Set column space to put data
     spi_send_cmd(0x2A);
-    uint8_t data_x[4] = {0, area->x1, 0, area->x2};
+    uint8_t data_x[4] = {0, area->x1, 0, area->x2};     //Beware Little Endian
     spi_send_data(data_x, 4);
 
     //Set row space to put data
     spi_send_cmd(0x2B);
     uint8_t data_y[4] = {0, area->y1, 0, area->y2};
-    ESP_LOGI(TAG, "pos %u", ((uint8_t*)&data_y)[2]);
     spi_send_data(data_y, 4);
 
     //Flush buffer into data
     spi_send_cmd(0x2C);
-    ESP_LOGI(TAG, "Size %u", BUFFER_SIZE);
-    spi_send_data(px_map, BUFFER_SIZE);
+    spi_send_data_async(px_map, BUFFER_SIZE);
 
     //Let LVGL know flush is complete
     lv_display_flush_ready(display);
@@ -198,6 +199,7 @@ void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_
  * Sets DC signal to command mode and sends the command over SPI
  */
 static void spi_send_cmd(uint8_t cmd){
+    spi_wait_queued();
     gpio_set_level(PIN_NUM_DC, 0);
     disp_spi_send_data(&cmd, 1);
 }
@@ -206,6 +208,7 @@ static void spi_send_cmd(uint8_t cmd){
  * Sets DC signal to data mode and sends the data over SPI
  */
 static void spi_send_data(void * data, uint32_t size){
+    spi_wait_queued();
     gpio_set_level(PIN_NUM_DC, 1);
     disp_spi_send_data(data, size);
 }
@@ -222,4 +225,36 @@ static void disp_spi_send_data(void * data, uint32_t size){
 
     // Send the data using DMA
     ESP_ERROR_CHECK(spi_device_transmit(spi, &t));
+}
+
+/**
+ * Sends data asynchronously with DMA for parallel flushing and rendering
+ */
+static void spi_send_data_async(void * data, uint32_t size){
+    spi_wait_queued();
+
+    gpio_set_level(PIN_NUM_DC, 1);
+    spi_transaction_t *t = (spi_transaction_t*) malloc(sizeof(spi_transaction_t));
+    memset(t, 0, sizeof(spi_transaction_t));        // Zero out the transaction
+    t->length = size * 8;                           // Data length in bits
+    t->tx_buffer = data;                            // The data to be sent
+    t->user = (void*)1;                             // D/C needs to be set to 1
+
+    // Send the data using DMA
+    ESP_ERROR_CHECK(spi_device_queue_trans(spi, t, portMAX_DELAY));
+    queue_cnt++;
+}
+
+/**
+ * Wait for previously queued data and free memory if when done if exists
+ * Always call to ensure rendering isn't interrupted
+ */
+static void spi_wait_queued(){
+    for (; queue_cnt > 0; queue_cnt--) {
+        spi_transaction_t *trans_result;
+        esp_err_t ret = spi_device_get_trans_result(spi, &trans_result, portMAX_DELAY);
+        if (ret == ESP_OK) {
+            free(trans_result);
+        }
+    }
 }

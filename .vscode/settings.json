@@ -32,6 +32,8 @@
         "string_view": "c",
         "span": "c",
         "bitset": "c",
-        "regex": "c"
+        "regex": "c",
+        "format": "c",
+        "initializer_list": "c"
     }
 }
