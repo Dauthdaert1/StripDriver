@@ -2,6 +2,7 @@
 #define DISPLAY_DRIVER_H
 
 #include "lvgl.h"
+#include "driver/i2c_master.h"
 
 //GPIO Pins connected to the LCD display
 #define PIN_NUM_MISO 19
@@ -12,8 +13,17 @@
 #define PIN_NUM_RST  33
 #define PIN_NUM_BL   25
 
+//GPIO Pins connected to touch controller
+#define PIN_TP_SDA   21
+#define PIN_TP_SCL   22
+#define PIN_TP_INT   26
+#define PIN_TP_RST   27
+
 //SPI to use for LCD controller
 #define DISPLAY_SPI     SPI3_HOST
+
+//I2C to use for touch controller
+#define TOUCH_I2C       I2C_NUM_1
 
 //Display Width and Height
 #define DISPLAY_WIDTH   240
@@ -35,5 +45,7 @@ void init_display();
  * Following implementation in: https://docs.lvgl.io/master/porting/display.html#flush-cb
  */
 void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_map);
+
+void my_input_read();
 
 #endif

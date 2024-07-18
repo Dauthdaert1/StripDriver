@@ -2,11 +2,14 @@
 #include <string.h>
 #include "display_driver.h"
 #include "driver/spi_master.h"
+#include "driver/i2c_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "lvgl.h"
 
 spi_device_handle_t spi;
+i2c_master_bus_handle_t i2c;
+i2c_master_dev_handle_t i2c_dev;
 lv_display_t * display;
 static const char *TAG = "DISPLAY_DRIVER";
 static uint8_t queue_cnt;
@@ -28,6 +31,8 @@ static void spi_send_data(void * data, uint32_t size);
 static void disp_spi_send_data(void * data, uint32_t size);
 static void spi_send_data_async(void * data, uint32_t size);
 static void spi_wait_queued();
+
+void my_input_read();
 
 /** 
  * Must be called to initialize connection with GC9A01 LCD controller before it can be used.
@@ -68,15 +73,17 @@ void init_display(){
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_INTR_DISABLE;       // Disable interrupt
     io_conf.mode = GPIO_MODE_OUTPUT;             // Set as output mode
-    io_conf.pin_bit_mask = (1ULL << PIN_NUM_DC | 1ULL << PIN_NUM_RST | 1ULL << PIN_NUM_BL);  // Bit mask of the pins to set
+    io_conf.pin_bit_mask = (1ULL << PIN_NUM_DC | 1ULL << PIN_NUM_RST | 1ULL << PIN_NUM_BL | 1ULL << PIN_TP_RST);  // Bit mask of the pins to set
     io_conf.pull_down_en = 0;                    // Disable pull-down
     io_conf.pull_up_en = 0;                      // Disable pull-up
     gpio_config(&io_conf);
 
     //Hit reset on display controller for fresh initialization just in case
     gpio_set_level(PIN_NUM_RST, 0);
+    gpio_set_level(PIN_TP_RST, 0);
     vTaskDelay(100 / portTICK_PERIOD_MS);
     gpio_set_level(PIN_NUM_RST, 1);
+    gpio_set_level(PIN_TP_RST, 1);
     vTaskDelay(100 / portTICK_PERIOD_MS);
     gpio_set_level(PIN_NUM_BL, 0);
 
@@ -170,6 +177,31 @@ void init_display(){
     uint8_t* dma_buffer1 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
     uint8_t* dma_buffer2 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
     lv_display_set_buffers(display, dma_buffer1, dma_buffer2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL); //TODO: Second buffer for drawing while DMA SPI works, add later
+
+    i2c_master_bus_config_t conf = {
+        .i2c_port = -1,
+        .sda_io_num = PIN_TP_SDA,
+        .scl_io_num = PIN_TP_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7, 
+    };
+
+    i2c_device_config_t dev_conf = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x15,
+        .scl_speed_hz = 400000,
+    };
+
+    esp_err_t err = i2c_new_master_bus(&conf, &i2c);
+    ESP_ERROR_CHECK(err);
+
+    err = i2c_master_bus_add_device(i2c, &dev_conf, &i2c_dev);
+    ESP_ERROR_CHECK(err);
+
+    //Register Input device
+    //lv_indev_t * indev = lv_indev_create();
+    //lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    //lv_indev_set_read_cb(indev, read_cb);
 }
 
 /**
@@ -177,6 +209,7 @@ void init_display(){
  * Following implementation in: https://docs.lvgl.io/master/porting/display.html#flush-cb
  */
 void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_map){
+
     //Set column space to put data
     spi_send_cmd(0x2A);
     uint8_t data_x[4] = {0, area->x1, 0, area->x2};     //Beware Little Endian
@@ -193,6 +226,21 @@ void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_
 
     //Let LVGL know flush is complete
     lv_display_flush_ready(display);
+}
+
+void my_input_read(){
+    uint8_t r_buf = 0x01;
+    uint8_t result[6] = {};
+    esp_err_t err = i2c_master_transmit_receive(i2c_dev, &r_buf, 1, result, 6, 1000);
+    ESP_ERROR_CHECK(err);
+
+    uint16_t x = result[3];
+    uint16_t y = result[5];
+
+    if(result[1]==1){
+        ESP_LOGI(TAG, "X: %u, Y: %u", x, y);
+    }
+    
 }
 
 /**

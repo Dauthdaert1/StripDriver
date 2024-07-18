@@ -34,6 +34,8 @@
         "bitset": "c",
         "regex": "c",
         "format": "c",
-        "initializer_list": "c"
+        "initializer_list": "c",
+        "spi_master.h": "c",
+        "i2c_master.h": "c"
     }
 }
