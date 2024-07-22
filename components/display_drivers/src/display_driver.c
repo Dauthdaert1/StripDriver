@@ -3,7 +3,11 @@
 #include "display_driver.h"
 #include "driver/spi_master.h"
 #include "driver/i2c_master.h"
+#include "driver/ledc.h"
 #include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "lvgl.h"
 
@@ -26,18 +30,21 @@ typedef struct {
 /***************************************
  * Static Helper Function Declarations * 
  ***************************************/
+static void my_input_read();
+static uint32_t my_get_millis();
+static void lvgl_timer_task(void *arg);
+static void start_lvgl_timer();
+static void lvgl_timer_init(void *pvParameter);
 static void spi_send_cmd(uint8_t cmd);
 static void spi_send_data(void * data, uint32_t size);
 static void disp_spi_send_data(void * data, uint32_t size);
 static void spi_send_data_async(void * data, uint32_t size);
 static void spi_wait_queued();
 
-void my_input_read();
-
 /** 
  * Must be called to initialize connection with GC9A01 LCD controller before it can be used.
  * Initalizes SPI and GPIO for LCD control, as well as registers with LVGL to handle display output.
- * TODO: Initalize Touch Screen with CST816S touch controller
+ * Initalizes Touch Screen with CST816S touch controller
 */
 void init_display(){
     esp_err_t ret;
@@ -166,18 +173,19 @@ void init_display(){
         curr_cmd++;
     }
 
-    //Turn on screen
-    //TODO: Make this own function with expanded functionality
-    gpio_set_level(PIN_NUM_BL, 1);
-
     //Connect to LVGL
     display = lv_display_create(240, 240);
     lv_display_set_flush_cb(display, display_flush_cb);
 
+    //Set up buffered rendering
     uint8_t* dma_buffer1 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
     uint8_t* dma_buffer2 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
     lv_display_set_buffers(display, dma_buffer1, dma_buffer2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL); //TODO: Second buffer for drawing while DMA SPI works, add later
 
+    //Set Timing callback
+    lv_tick_set_cb(my_get_millis);
+
+    //Init I2C for touch control
     i2c_master_bus_config_t conf = {
         .i2c_port = -1,
         .sda_io_num = PIN_TP_SDA,
@@ -199,16 +207,20 @@ void init_display(){
     ESP_ERROR_CHECK(err);
 
     //Register Input device
-    //lv_indev_t * indev = lv_indev_create();
-    //lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-    //lv_indev_set_read_cb(indev, read_cb);
+    lv_indev_t * indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, my_input_read);
+
+
+    //Start LVGL on core 1
+    xTaskCreatePinnedToCore(lvgl_timer_init, "lvgl_timer_init", 2048, NULL, configMAX_PRIORITIES - 1, NULL, 1);
 }
 
 /**
  * Implementation of function to print the buffer in px_map to the display to be called by LVGL
  * Following implementation in: https://docs.lvgl.io/master/porting/display.html#flush-cb
  */
-void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_map){
+void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned char * px_map){
 
     //Set column space to put data
     spi_send_cmd(0x2A);
@@ -228,7 +240,68 @@ void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_
     lv_display_flush_ready(display);
 }
 
-void my_input_read(){
+/**
+ * Used to control brightness of display with PWM wave
+ * Acceptable values are 0 - 100
+ */
+void set_brightness(uint8_t brightness){
+    //Ensure brightness value is in range
+    if(brightness>100){
+        ESP_LOGE(TAG, "Invalid brightness value: %u", brightness);
+    }
+    
+    //If max or min value enable or disable without LEDC
+    if(brightness==100 || brightness==0){
+        //Configure GPIO
+        gpio_config_t io_conf;
+        io_conf.intr_type = GPIO_INTR_DISABLE;       // Disable interrupt
+        io_conf.mode = GPIO_MODE_OUTPUT;             // Set as output mode
+        io_conf.pin_bit_mask = (1ULL << PIN_NUM_BL);  // Bit mask of the pins to set
+        io_conf.pull_down_en = 0;                    // Disable pull-down
+        io_conf.pull_up_en = 0;                      // Disable pull-up
+        gpio_config(&io_conf);
+        if(brightness==0){
+            gpio_set_level(PIN_NUM_BL, 0);
+        }else{
+            gpio_set_level(PIN_NUM_BL, 1);
+        }
+        return;
+    }
+
+    //Set brightness using PWM wave with LEDC
+    ledc_timer_config_t tim_config = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_13_BIT,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = 5000,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+
+    ESP_ERROR_CHECK(ledc_timer_config(&tim_config));
+
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode     = LEDC_LOW_SPEED_MODE, // Low speed mode
+        .channel        = LEDC_CHANNEL_0,      // Channel 0
+        .timer_sel      = LEDC_TIMER_0,        // Use timer 0
+        .intr_type      = LEDC_INTR_DISABLE,   // Disable interrupt
+        .gpio_num       = PIN_NUM_BL,         // GPIO pin number
+        .duty           = 0,                   // Initial duty cycle (0%)
+        .hpoint         = 0                    // Hpoint value (0)
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+
+    // Set duty cycle (8192 is 13 bit resolution)
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 8192*(brightness/100.0)));
+    // Update duty cycle
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
+
+}
+
+/**
+ * Implementation of callback function to read input
+ * https://docs.lvgl.io/master/porting/indev.html
+ */
+static void my_input_read(lv_indev_t * indev, lv_indev_data_t * data){
     uint8_t r_buf = 0x01;
     uint8_t result[6] = {};
     esp_err_t err = i2c_master_transmit_receive(i2c_dev, &r_buf, 1, result, 6, 1000);
@@ -237,10 +310,55 @@ void my_input_read(){
     uint16_t x = result[3];
     uint16_t y = result[5];
 
-    if(result[1]==1){
-        ESP_LOGI(TAG, "X: %u, Y: %u", x, y);
+    if(result[1]) {
+        data->point.x = x;
+        data->point.y = y;
+        data->state = LV_INDEV_STATE_PRESSED;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
     }
-    
+}
+
+/**
+ * Static function is wrapper for callback to get system time in LVGL
+ */
+static uint32_t my_get_millis(){
+    return (uint32_t) (esp_timer_get_time() / 1000);
+}
+
+/**
+ * Static function is wrapper for function to periodically interrupt
+ */
+static void lvgl_timer_task(void *arg)
+{
+    lv_timer_handler();  // Run the LVGL task handler
+}
+
+/**
+ * Starts timer to periodically call function
+ */
+static void start_lvgl_timer()
+{
+    const esp_timer_create_args_t lvgl_timer_args = {
+        .callback = &lvgl_timer_task,
+        .arg = NULL,
+        .name = "lvgl_timer",
+        .dispatch_method = ESP_TIMER_TASK,  // Run in a high-priority task
+        .skip_unhandled_events = false,
+    };
+
+    esp_timer_handle_t lvgl_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&lvgl_timer_args, &lvgl_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_timer, 5 * 1000));  // 5 milliseconds
+}
+
+/**
+ * Task to call on second core and deletes itself after setting timer
+ */
+void lvgl_timer_init(void *pvParameter)
+{
+    start_lvgl_timer();
+    vTaskDelete(NULL);  // Delete this task once the timer is configured
 }
 
 /**

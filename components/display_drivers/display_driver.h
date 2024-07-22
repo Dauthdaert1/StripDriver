@@ -36,7 +36,7 @@
 /** 
  * Must be called to initialize connection with GC9A01 LCD controller before it can be used.
  * Initalizes SPI and GPIO for LCD control, as well as registers with LVGL to handle display output.
- * TODO: Initalize Touch Screen with CST816S touch controller
+ * Initalizes Touch Screen with CST816S touch controller
 */
 void init_display();
 
@@ -44,8 +44,12 @@ void init_display();
  * Implementation of function to print the buffer in px_map to the display to be called by LVGL
  * Following implementation in: https://docs.lvgl.io/master/porting/display.html#flush-cb
  */
-void display_flush_cb(lv_display_t * display, const lv_area_t * area, void * px_map);
+void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned char * px_map);
 
-void my_input_read();
+/**
+ * Used to control brightness of display with PWM wave
+ * Acceptable values are 0 - 100
+ */
+void set_brightness(uint8_t brightness);
 
 #endif

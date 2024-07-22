@@ -32,26 +32,25 @@ led_strip_spi_config_t spi_config = {
     .spi_bus = SPI2_HOST,   // SPI bus ID
 };
 
-
 void app_main(void)
 {
     lv_init();
     init_display();
+    
+    set_brightness(10);
 
     /*Change the active screen's background color*/
-    lv_obj_set_style_bg_color(lv_screen_active(), lv_palette_main(LV_PALETTE_BLUE), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), LV_PART_MAIN);
 
     /*Create a white label, set its text and align it to the center*/
     lv_obj_t * label = lv_label_create(lv_screen_active());
     lv_label_set_text(label, "Hello world");
     lv_obj_set_style_text_color(lv_screen_active(), lv_color_hex(0xffffff), LV_PART_MAIN);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+    lv_example_slider_1();
     
     while(true){
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-        lv_tick_inc(100);
-        lv_timer_handler();
-        my_input_read();
+        
     }
 
 
