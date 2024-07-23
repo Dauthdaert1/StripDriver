@@ -7,6 +7,7 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "lvgl.h"
@@ -17,6 +18,7 @@ i2c_master_dev_handle_t i2c_dev;
 lv_display_t * display;
 static const char *TAG = "DISPLAY_DRIVER";
 static uint8_t queue_cnt;
+SemaphoreHandle_t lvgl_mutex;
 
 /**
  * Used for initalization commands
@@ -217,8 +219,8 @@ void init_display(){
 }
 
 /**
- * Convert to bgr565
- * Must be called before swapping endianness or You're Fucked
+ * Convert to bgr565 and swap endianness for display
+ * rrrrrggggggbbbbb -> gggrrrrrbbbbbggg
  */
 static void rgb_to_bgr565(void * buf, uint32_t buf_size_px){
     uint32_t u32_cnt = buf_size_px / 2;
@@ -226,27 +228,27 @@ static void rgb_to_bgr565(void * buf, uint32_t buf_size_px){
     uint32_t * buf32 = buf;
 
     while(u32_cnt >= 8) {
-        buf32[0] = ((buf32[0] & 0xf800f800) >> 11) | (buf32[0] & 0x07e007e0) | ((buf32[0] & 0x001f001f) << 11);
-        buf32[1] = ((buf32[1] & 0xf800f800) >> 11) | (buf32[1] & 0x07e007e0) | ((buf32[1] & 0x001f001f) << 11);
-        buf32[2] = ((buf32[2] & 0xf800f800) >> 11) | (buf32[2] & 0x07e007e0) | ((buf32[2] & 0x001f001f) << 11);
-        buf32[3] = ((buf32[3] & 0xf800f800) >> 11) | (buf32[3] & 0x07e007e0) | ((buf32[3] & 0x001f001f) << 11);
-        buf32[4] = ((buf32[4] & 0xf800f800) >> 11) | (buf32[4] & 0x07e007e0) | ((buf32[4] & 0x001f001f) << 11);
-        buf32[5] = ((buf32[5] & 0xf800f800) >> 11) | (buf32[5] & 0x07e007e0) | ((buf32[5] & 0x001f001f) << 11);
-        buf32[6] = ((buf32[6] & 0xf800f800) >> 11) | (buf32[6] & 0x07e007e0) | ((buf32[6] & 0x001f001f) << 11);
-        buf32[7] = ((buf32[7] & 0xf800f800) >> 11) | (buf32[7] & 0x07e007e0) | ((buf32[7] & 0x001f001f) << 11);
+        buf32[0] = ((buf32[0] & 0xf800f800) >> 3) | ((buf32[0] & 0x07000700) >> 8) | ((buf32[0] & 0x00e000e0) << 8) | ((buf32[0] & 0x001f001f) << 3);
+        buf32[1] = ((buf32[1] & 0xf800f800) >> 3) | ((buf32[1] & 0x07000700) >> 8) | ((buf32[1] & 0x00e000e0) << 8) | ((buf32[1] & 0x001f001f) << 3);
+        buf32[2] = ((buf32[2] & 0xf800f800) >> 3) | ((buf32[2] & 0x07000700) >> 8) | ((buf32[2] & 0x00e000e0) << 8) | ((buf32[2] & 0x001f001f) << 3);
+        buf32[3] = ((buf32[3] & 0xf800f800) >> 3) | ((buf32[3] & 0x07000700) >> 8) | ((buf32[3] & 0x00e000e0) << 8) | ((buf32[3] & 0x001f001f) << 3);
+        buf32[4] = ((buf32[4] & 0xf800f800) >> 3) | ((buf32[4] & 0x07000700) >> 8) | ((buf32[4] & 0x00e000e0) << 8) | ((buf32[4] & 0x001f001f) << 3);
+        buf32[5] = ((buf32[5] & 0xf800f800) >> 3) | ((buf32[5] & 0x07000700) >> 8) | ((buf32[5] & 0x00e000e0) << 8) | ((buf32[5] & 0x001f001f) << 3);
+        buf32[6] = ((buf32[6] & 0xf800f800) >> 3) | ((buf32[6] & 0x07000700) >> 8) | ((buf32[6] & 0x00e000e0) << 8) | ((buf32[6] & 0x001f001f) << 3);
+        buf32[7] = ((buf32[7] & 0xf800f800) >> 3) | ((buf32[7] & 0x07000700) >> 8) | ((buf32[7] & 0x00e000e0) << 8) | ((buf32[7] & 0x001f001f) << 3);
         buf32 += 8;
         u32_cnt -= 8;
     }
 
     while(u32_cnt) {
-        *buf32 = ((*buf32 & 0xf800f800) >> 11) | (*buf32 & 0x07e007e0) | ((*buf32 & 0x001f001f) << 11);
+        *buf32 = ((*buf32 & 0xf800f800) >> 3) | ((*buf32 & 0x07000700) >> 8) | ((*buf32 & 0x00e000e0) << 8) | ((*buf32 & 0x001f001f) << 3);
         buf32++;
         u32_cnt--;
     }
 
     if(buf_size_px & 0x1) {
         uint32_t e = buf_size_px - 1;
-        buf16[e] = ((buf16[e] & 0xf800) >> 11) | (buf16[e] & 0x07e0) | ((buf16[e] & 0x001f) << 11);
+        buf16[e] = ((buf16[e] & 0xf800) >> 3) | ((buf16[e] & 0x0700) >> 8) | ((buf16[e] & 0x00e0) << 8) | ((buf16[e] & 0x001f) << 3);
     }
 }
 
@@ -267,15 +269,9 @@ void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned c
 
     
     uint8_t* buf = px_map;
-    ESP_LOGI(TAG, "1: %x.%x", buf[0], buf[1]);
     rgb_to_bgr565(px_map, BUFFER_SIZE/2); 
-    ESP_LOGI(TAG, "2: %x.%x", buf[0], buf[1]);
-    lv_draw_sw_rgb565_swap(px_map, BUFFER_SIZE/2);//Swap with little endian
+    //lv_draw_sw_rgb565_swap(px_map, BUFFER_SIZE/2);//Swap with little endian
     
-    
-    ESP_LOGI(TAG, "3: %x.%x", buf[0], buf[1]);
-
-    ESP_LOGI(TAG, "4: %x", ((0x1f & 0x001f) << 11));
 
     //Flush buffer into data
     spi_send_cmd(0x2C);
@@ -342,6 +338,10 @@ void set_brightness(uint8_t brightness){
 
 }
 
+void lvgl_set_mutex(SemaphoreHandle_t mutex){
+    lvgl_mutex = mutex;
+}
+
 /**
  * Implementation of callback function to read input
  * https://docs.lvgl.io/master/porting/indev.html
@@ -376,7 +376,9 @@ static uint32_t my_get_millis(){
  */
 static void lvgl_timer_task(void *arg)
 {
+    while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
     lv_timer_handler();  // Run the LVGL task handler
+    xSemaphoreGive(lvgl_mutex);
 }
 
 /**

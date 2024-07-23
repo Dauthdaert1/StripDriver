@@ -3,6 +3,9 @@
 
 #include "lvgl.h"
 #include "driver/i2c_master.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 //GPIO Pins connected to the LCD display
 #define PIN_NUM_MISO 19
@@ -51,5 +54,8 @@ void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned c
  * Acceptable values are 0 - 100
  */
 void set_brightness(uint8_t brightness);
+
+
+void lvgl_set_mutex(SemaphoreHandle_t mutex);
 
 #endif

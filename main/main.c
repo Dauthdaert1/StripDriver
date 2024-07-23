@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "led_strip.h"
@@ -15,6 +16,7 @@
 
 static const char *TAG = "LED_STRIP";
 static led_strip_handle_t led_strip;
+static SemaphoreHandle_t lvgl_mutex;
 
 
 /* LED strip initialization with the GPIO and pixels number*/
@@ -40,20 +42,33 @@ static void slider_event_cb(lv_event_t * e)
 
 void app_main(void)
 {
+    lvgl_mutex = xSemaphoreCreateMutex();
+    if (lvgl_mutex == NULL) {
+        printf("Mutex creation failed\n");
+        return;
+    }
+
+    while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
     lv_init();
     init_display();
+    lvgl_set_mutex(lvgl_mutex);
+    xSemaphoreGive(lvgl_mutex);
     
     set_brightness(100);
 
     /*Change the active screen's background color*/
     lv_color_t color = lv_color_hex(0x0000FF);
+    while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
+    lv_obj_set_style_bg_color(lv_screen_active(), color, LV_PART_MAIN);
+    xSemaphoreGive(lvgl_mutex);
+    
     printf("Red: %u\n", color.red);
     printf("Green: %u\n", color.green);
     printf("Blue: %u\n", color.blue);
     
 
 
-    lv_obj_set_style_bg_color(lv_screen_active(), color, LV_PART_MAIN);
+    
     ESP_LOGI(TAG, "4");
 
     /*Create a white label, set its text and align it to the center*/

@@ -41,6 +41,8 @@
         "functional": "c",
         "cstdint": "c",
         "ledc.h": "c",
-        "algorithm": "c"
+        "algorithm": "c",
+        "semphr.h": "c",
+        "stdio.h": "c"
     }
 }
