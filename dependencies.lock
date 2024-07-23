@@ -11,11 +11,11 @@ dependencies:
       type: idf
     version: 5.2.2
   lvgl/lvgl:
-    component_hash: 2a8f619b5c2b1c7ad116c33d43dae8989c76739068f406a7e8ba9221e1085f17
+    component_hash: null
     source:
-      service_url: https://api.components.espressif.com/
-      type: service
+      path: A:\ESP32Projects\StripExample\components\lvgl__lvgl
+      type: local
     version: 9.1.0
-manifest_hash: 79df8699bf7997eb9a1f4fb5fda0bb504f492a334720ef20f731debfd51b9c0f
+manifest_hash: 72c95d77144c5cc2cba4ce11088bf721d6cfac4e280e19f5f019e6bf1e63aa48
 target: esp32
 version: 1.0.0

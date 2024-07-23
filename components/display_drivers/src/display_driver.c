@@ -12,16 +12,8 @@
 #include "esp_log.h"
 #include "lvgl.h"
 
-spi_device_handle_t spi;
-i2c_master_bus_handle_t i2c;
-i2c_master_dev_handle_t i2c_dev;
-lv_display_t * display;
-static const char *TAG = "DISPLAY_DRIVER";
-static uint8_t queue_cnt;
-SemaphoreHandle_t lvgl_mutex;
-
 /**
- * Used for initalization commands
+ * @brief Used for initalization commands
  */
 typedef struct {
     uint8_t cmd;
@@ -29,9 +21,26 @@ typedef struct {
     uint8_t databytes; //Bytes of data
 } lcd_init_cmd_t;
 
-/***************************************
- * Static Helper Function Declarations * 
- ***************************************/
+
+
+/*=======================
+   File Static Variables  
+  =======================*/
+static spi_device_handle_t spi;
+static i2c_master_bus_handle_t i2c;
+static i2c_master_dev_handle_t i2c_dev;
+static lv_display_t * display;
+static const char *TAG = "DISPLAY_DRIVER";
+static uint8_t queue_cnt;
+static SemaphoreHandle_t * lvgl_mutex;
+
+
+
+/*==============================
+   Static Function Declarations  
+  ==============================*/
+static void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned char * px_map);
+static void rgb_to_bgr565(void * buf, uint32_t buf_size_px);
 static void my_input_read();
 static uint32_t my_get_millis();
 static void lvgl_timer_task(void *arg);
@@ -43,15 +52,22 @@ static void disp_spi_send_data(void * data, uint32_t size);
 static void spi_send_data_async(void * data, uint32_t size);
 static void spi_wait_queued();
 
-/** 
- * Must be called to initialize connection with GC9A01 LCD controller before it can be used.
- * Initalizes SPI and GPIO for LCD control, as well as registers with LVGL to handle display output.
- * Initalizes Touch Screen with CST816S touch controller
-*/
-void init_display(){
+
+
+/*=============================
+   Public Function Definitions
+  =============================*/
+void init_display(SemaphoreHandle_t * mutex){
+    lvgl_mutex = mutex;
     esp_err_t ret;
 
-    // Configuration for the SPI bus
+
+
+    /*====================================
+       Configure GPIO, SPI, I2C, and LEDC 
+      ====================================*/
+
+    // Configure SPI
     spi_bus_config_t buscfg = {
         .miso_io_num = -1,              //Pin is there, but unneeded so ignored
         .mosi_io_num = PIN_NUM_MOSI,
@@ -61,20 +77,17 @@ void init_display(){
         .max_transfer_sz = BUFFER_SIZE,
     };
 
-    // Initialize the SPI bus
     ret = spi_bus_initialize(DISPLAY_SPI, &buscfg, 1);
     ESP_ERROR_CHECK(ret);
 
-    // Configuration for the SPI device on the bus
     spi_device_interface_config_t devcfg = {
         .clock_speed_hz = 80 * 1000 * 1000, // Clock out at 80 MHz
         .mode = 0,                          // SPI mode 0
         .spics_io_num = PIN_NUM_CS,         // CS pin
         .queue_size = 7,                    // Transaction queue size
-        .pre_cb = NULL,                     // Specify pre-transfer callback to handle D/C line
+        .pre_cb = NULL,                     
     };
 
-    // Attach the SPI device to the SPI bus
     ret = spi_bus_add_device(DISPLAY_SPI, &devcfg, &spi);
     ESP_ERROR_CHECK(ret);
 
@@ -82,26 +95,71 @@ void init_display(){
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_INTR_DISABLE;       // Disable interrupt
     io_conf.mode = GPIO_MODE_OUTPUT;             // Set as output mode
-    io_conf.pin_bit_mask = (1ULL << PIN_NUM_DC | 1ULL << PIN_NUM_RST | 1ULL << PIN_NUM_BL | 1ULL << PIN_TP_RST);  // Bit mask of the pins to set
+    io_conf.pin_bit_mask = (1ULL << PIN_NUM_DC | 1ULL << PIN_NUM_RST | 1ULL << PIN_TP_RST);  // Bit mask of the pins to set
     io_conf.pull_down_en = 0;                    // Disable pull-down
     io_conf.pull_up_en = 0;                      // Disable pull-up
     gpio_config(&io_conf);
 
-    //Hit reset on display controller for fresh initialization just in case
+    //Configure I2C
+    i2c_master_bus_config_t conf = {
+        .i2c_port = -1,
+        .sda_io_num = PIN_TP_SDA,
+        .scl_io_num = PIN_TP_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7, 
+    };
+
+    i2c_device_config_t dev_conf = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x15,
+        .scl_speed_hz = 400000,
+    };
+
+    esp_err_t err = i2c_new_master_bus(&conf, &i2c);
+    ESP_ERROR_CHECK(err);
+
+    err = i2c_master_bus_add_device(i2c, &dev_conf, &i2c_dev);
+    ESP_ERROR_CHECK(err);
+
+    //Configure LEDC
+    ledc_timer_config_t tim_config = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_13_BIT,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = 5000,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+
+    ESP_ERROR_CHECK(ledc_timer_config(&tim_config));
+
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode     = LEDC_LOW_SPEED_MODE, // Low speed mode
+        .channel        = LEDC_CHANNEL_0,      // Channel 0
+        .timer_sel      = LEDC_TIMER_0,        // Use timer 0
+        .intr_type      = LEDC_INTR_DISABLE,   // Disable interrupt
+        .gpio_num       = PIN_NUM_BL,         // GPIO pin number
+        .duty           = 0,                   // Initial duty cycle (0%)
+        .hpoint         = 0                    // Hpoint value (0)
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+
+    
+
+    /*=======================
+       Display Initalization
+      =======================*/
+
+    //Reset Display
     gpio_set_level(PIN_NUM_RST, 0);
     gpio_set_level(PIN_TP_RST, 0);
     vTaskDelay(100 / portTICK_PERIOD_MS);
     gpio_set_level(PIN_NUM_RST, 1);
     gpio_set_level(PIN_TP_RST, 1);
     vTaskDelay(100 / portTICK_PERIOD_MS);
-    gpio_set_level(PIN_NUM_BL, 0);
-
-
 
     //LCD Initalization Commands from: 
     //https://github.com/lvgl/lvgl_esp32_drivers/blob/9fed1cc47b5a45fec6bae08b55d2147d3b50260c/lvgl_tft/GC9A01.c
     lcd_init_cmd_t GC_init_cmds[]={
-        ////////////////////////////////////////////
 		{0xEF, {0}, 0},
 		{0xEB, {0x14}, 1},
 
@@ -156,7 +214,6 @@ void init_display(){
 		{0x29, {0}, 0x80},	//0x80 delay flag
         {0x36, {0x68}, 4},  // Set orientation (0x08, 0xC8, 0x68, 0xA8 for "PORTRAIT", "PORTRAIT_INVERTED", "LANDSCAPE", "LANDSCAPE_INVERTED")
 		{0, {0}, 0xff},		//init end flag
-        ////////////////////////////////////////////
 	};
 
     //Send init commands
@@ -175,52 +232,89 @@ void init_display(){
         curr_cmd++;
     }
 
-    //Connect to LVGL
-    display = lv_display_create(240, 240);
+
+
+    /*================
+       Configure LVGL
+      ================*/
+
+    //Lock Mutex
+    while(xSemaphoreTake(*lvgl_mutex, portMAX_DELAY) !=pdTRUE);
+
+    display = lv_display_create(DISPLAY_WIDTH, DISPLAY_HEIGHT);
     lv_display_set_flush_cb(display, display_flush_cb);
 
-    //Set up buffered rendering
     uint8_t* dma_buffer1 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
     uint8_t* dma_buffer2 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
-    lv_display_set_buffers(display, dma_buffer1, dma_buffer2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL); //TODO: Second buffer for drawing while DMA SPI works, add later
+    lv_display_set_buffers(display, dma_buffer1, dma_buffer2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     //Set Timing callback
     lv_tick_set_cb(my_get_millis);
-
-    //Init I2C for touch control
-    i2c_master_bus_config_t conf = {
-        .i2c_port = -1,
-        .sda_io_num = PIN_TP_SDA,
-        .scl_io_num = PIN_TP_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7, 
-    };
-
-    i2c_device_config_t dev_conf = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = 0x15,
-        .scl_speed_hz = 400000,
-    };
-
-    esp_err_t err = i2c_new_master_bus(&conf, &i2c);
-    ESP_ERROR_CHECK(err);
-
-    err = i2c_master_bus_add_device(i2c, &dev_conf, &i2c_dev);
-    ESP_ERROR_CHECK(err);
 
     //Register Input device
     lv_indev_t * indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, my_input_read);
 
-
     //Start LVGL on core 1
     xTaskCreatePinnedToCore(lvgl_timer_init, "lvgl_timer_init", 2048, NULL, configMAX_PRIORITIES - 1, NULL, 1);
+
+    xSemaphoreGive(*lvgl_mutex);    
+}
+
+void set_brightness(uint8_t brightness){
+    //Ensure brightness value is in range
+    if(brightness>100){
+        ESP_LOGE(TAG, "Invalid brightness value: %u", brightness);
+    }
+
+    // Set duty cycle (8192 is 13 bit resolution)
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 8192*(brightness/100.0)));
+    // Update duty cycle
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
+
+}
+
+
+
+/*=============================
+   Static Function Definitions  
+  =============================*/
+
+/**
+ * @brief Implementation of function to print the buffer in px_map to the display to be called by LVGL
+ * @note Following implementation in: https://docs.lvgl.io/master/porting/display.html#flush-cb
+ * @param display The display being outputted to
+ * @param area The area of the display being written to
+ * @param px_map The buffer to write to LCD
+ */
+static void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned char * px_map){
+    //Set columns
+    spi_send_cmd(0x2A);
+    uint8_t data_x[4] = {0, area->x1, 0, area->x2};     //Beware Little Endian
+    spi_send_data(data_x, 4);
+
+    //Set rows
+    spi_send_cmd(0x2B);
+    uint8_t data_y[4] = {0, area->y1, 0, area->y2};
+    spi_send_data(data_y, 4);
+
+    //Reconfigure buffer for correct printing
+    rgb_to_bgr565(px_map, BUFFER_SIZE/2); 
+
+    //Flush buffer into LCD
+    spi_send_cmd(0x2C);
+    spi_send_data_async(px_map, BUFFER_SIZE);
+
+    //Let LVGL know flush is starting
+    lv_display_flush_ready(display);
 }
 
 /**
- * Convert to bgr565 and swap endianness for display
- * rrrrrggggggbbbbb -> gggrrrrrbbbbbggg
+ * @brief Convert to bgr565 and swap endianness for display
+ * @note rrrrrggggggbbbbb -> gggrrrrrbbbbbggg
+ * @param buf Buffer to modify
+ * @param buf_size_px The buffer size in pixels
  */
 static void rgb_to_bgr565(void * buf, uint32_t buf_size_px){
     uint32_t u32_cnt = buf_size_px / 2;
@@ -253,98 +347,10 @@ static void rgb_to_bgr565(void * buf, uint32_t buf_size_px){
 }
 
 /**
- * Implementation of function to print the buffer in px_map to the display to be called by LVGL
- * Following implementation in: https://docs.lvgl.io/master/porting/display.html#flush-cb
- */
-void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned char * px_map){
-    //Set column space to put data
-    spi_send_cmd(0x2A);
-    uint8_t data_x[4] = {0, area->x1, 0, area->x2};     //Beware Little Endian
-    spi_send_data(data_x, 4);
-
-    //Set row space to put data
-    spi_send_cmd(0x2B);
-    uint8_t data_y[4] = {0, area->y1, 0, area->y2};
-    spi_send_data(data_y, 4);
-
-    
-    uint8_t* buf = px_map;
-    rgb_to_bgr565(px_map, BUFFER_SIZE/2); 
-    //lv_draw_sw_rgb565_swap(px_map, BUFFER_SIZE/2);//Swap with little endian
-    
-
-    //Flush buffer into data
-    spi_send_cmd(0x2C);
-    spi_send_data_async(px_map, BUFFER_SIZE);
-
-    //Let LVGL know flush is complete
-    lv_display_flush_ready(display);
-}
-
-/**
- * Used to control brightness of display with PWM wave
- * Acceptable values are 0 - 100
- */
-void set_brightness(uint8_t brightness){
-    //Ensure brightness value is in range
-    if(brightness>100){
-        ESP_LOGE(TAG, "Invalid brightness value: %u", brightness);
-    }
-    
-    //If max or min value enable or disable without LEDC
-    if(brightness==100 || brightness==0){
-        //Configure GPIO
-        gpio_config_t io_conf;
-        io_conf.intr_type = GPIO_INTR_DISABLE;       // Disable interrupt
-        io_conf.mode = GPIO_MODE_OUTPUT;             // Set as output mode
-        io_conf.pin_bit_mask = (1ULL << PIN_NUM_BL);  // Bit mask of the pins to set
-        io_conf.pull_down_en = 0;                    // Disable pull-down
-        io_conf.pull_up_en = 0;                      // Disable pull-up
-        gpio_config(&io_conf);
-        if(brightness==0){
-            gpio_set_level(PIN_NUM_BL, 0);
-        }else{
-            gpio_set_level(PIN_NUM_BL, 1);
-        }
-        return;
-    }
-
-    //Set brightness using PWM wave with LEDC
-    ledc_timer_config_t tim_config = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = LEDC_TIMER_13_BIT,
-        .timer_num = LEDC_TIMER_0,
-        .freq_hz = 5000,
-        .clk_cfg = LEDC_AUTO_CLK,
-    };
-
-    ESP_ERROR_CHECK(ledc_timer_config(&tim_config));
-
-    ledc_channel_config_t ledc_channel = {
-        .speed_mode     = LEDC_LOW_SPEED_MODE, // Low speed mode
-        .channel        = LEDC_CHANNEL_0,      // Channel 0
-        .timer_sel      = LEDC_TIMER_0,        // Use timer 0
-        .intr_type      = LEDC_INTR_DISABLE,   // Disable interrupt
-        .gpio_num       = PIN_NUM_BL,         // GPIO pin number
-        .duty           = 0,                   // Initial duty cycle (0%)
-        .hpoint         = 0                    // Hpoint value (0)
-    };
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
-
-    // Set duty cycle (8192 is 13 bit resolution)
-    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 8192*(brightness/100.0)));
-    // Update duty cycle
-    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
-
-}
-
-void lvgl_set_mutex(SemaphoreHandle_t mutex){
-    lvgl_mutex = mutex;
-}
-
-/**
- * Implementation of callback function to read input
- * https://docs.lvgl.io/master/porting/indev.html
+ * @brief Implementation of callback function to read input
+ * @note https://docs.lvgl.io/master/porting/indev.html
+ * @param indev Input device pointer
+ * @param data Data to set from touch controller
  */
 static void my_input_read(lv_indev_t * indev, lv_indev_data_t * data){
     uint8_t r_buf = 0x01;
@@ -365,24 +371,25 @@ static void my_input_read(lv_indev_t * indev, lv_indev_data_t * data){
 }
 
 /**
- * Static function is wrapper for callback to get system time in LVGL
+ * @brief Wrapper for callback to get system time in LVGL
+ * @returns System time in milliseconds
  */
 static uint32_t my_get_millis(){
     return (uint32_t) (esp_timer_get_time() / 1000);
 }
 
 /**
- * Static function is wrapper for function to periodically interrupt
+ * @brief Wrapper for function to periodically interrupt with mutex locking
  */
 static void lvgl_timer_task(void *arg)
 {
-    while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
+    while(xSemaphoreTake(*lvgl_mutex, portMAX_DELAY) !=pdTRUE);
     lv_timer_handler();  // Run the LVGL task handler
-    xSemaphoreGive(lvgl_mutex);
+    xSemaphoreGive(*lvgl_mutex);
 }
 
 /**
- * Starts timer to periodically call function
+ * @brief Starts timer to periodically call function
  */
 static void start_lvgl_timer()
 {
@@ -400,7 +407,7 @@ static void start_lvgl_timer()
 }
 
 /**
- * Task to call on second core and deletes itself after setting timer
+ * @brief Task to call on second core and deletes itself after setting timer
  */
 void lvgl_timer_init(void *pvParameter)
 {
@@ -409,7 +416,8 @@ void lvgl_timer_init(void *pvParameter)
 }
 
 /**
- * Sets DC signal to command mode and sends the command over SPI
+ * @brief Sets DC signal to command mode and sends the command over SPI
+ * @param cmd Command (1 byte) to send
  */
 static void spi_send_cmd(uint8_t cmd){
     spi_wait_queued();
@@ -418,7 +426,9 @@ static void spi_send_cmd(uint8_t cmd){
 }
 
 /**
- * Sets DC signal to data mode and sends the data over SPI
+ * @brief Sets DC signal to data mode and sends the data over SPI
+ * @param data Pointer to data to send
+ * @param size Amount of data to send
  */
 static void spi_send_data(void * data, uint32_t size){
     spi_wait_queued();
@@ -427,7 +437,9 @@ static void spi_send_data(void * data, uint32_t size){
 }
 
 /**
- * Sends specified amount of bytes over SPI to LCD
+ * @brief Sends specified amount of bytes over SPI to LCD
+ * @param data Pointer to data to send
+ * @param size Amount of data to send
  */
 static void disp_spi_send_data(void * data, uint32_t size){
     spi_transaction_t t;
@@ -441,12 +453,12 @@ static void disp_spi_send_data(void * data, uint32_t size){
 }
 
 /**
- * Sends data asynchronously with DMA for parallel flushing and rendering
+ * @brief Sends data asynchronously with DMA for parallel flushing and rendering
+ * @param data Pointer to data to send
+ * @param size Amount of data to send
  */
 static void spi_send_data_async(void * data, uint32_t size){
     spi_wait_queued();
-
-    
 
     gpio_set_level(PIN_NUM_DC, 1);
     spi_transaction_t *t = (spi_transaction_t*) malloc(sizeof(spi_transaction_t));
@@ -461,8 +473,8 @@ static void spi_send_data_async(void * data, uint32_t size){
 }
 
 /**
- * Wait for previously queued data and free memory if when done if exists
- * Always call to ensure rendering isn't interrupted
+ * @brief Wait for previously queued data and free memory if when done if exists
+ * @note Always call to ensure rendering isn't interrupted
  */
 static void spi_wait_queued(){
     for (; queue_cnt > 0; queue_cnt--) {

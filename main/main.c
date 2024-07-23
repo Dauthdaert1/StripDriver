@@ -48,28 +48,16 @@ void app_main(void)
         return;
     }
 
-    while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
     lv_init();
-    init_display();
-    lvgl_set_mutex(lvgl_mutex);
-    xSemaphoreGive(lvgl_mutex);
+    init_display(&lvgl_mutex);
     
     set_brightness(100);
 
     /*Change the active screen's background color*/
-    lv_color_t color = lv_color_hex(0x0000FF);
+    lv_color_t color = lv_color_hex(0xFFFFFF);
     while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
     lv_obj_set_style_bg_color(lv_screen_active(), color, LV_PART_MAIN);
-    xSemaphoreGive(lvgl_mutex);
     
-    printf("Red: %u\n", color.red);
-    printf("Green: %u\n", color.green);
-    printf("Blue: %u\n", color.blue);
-    
-
-
-    
-    ESP_LOGI(TAG, "4");
 
     /*Create a white label, set its text and align it to the center*/
     //lv_obj_t * label = lv_label_create(lv_screen_active());
@@ -77,12 +65,13 @@ void app_main(void)
     //lv_obj_set_style_text_color(lv_screen_active(), lv_color_hex(0xffffff), LV_PART_MAIN);
     //lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
 
-    //lv_obj_t * slider = lv_slider_create(lv_screen_active());
-    //lv_slider_set_value(slider, 10, LV_ANIM_ON);
-    //lv_slider_set_range(slider, 0, 100);
-    //lv_obj_set_size(slider, 100, 10);
-    //lv_obj_center(slider);
-    //lv_obj_add_event_cb(slider, slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_t * slider = lv_slider_create(lv_screen_active());
+    lv_slider_set_value(slider, 10, LV_ANIM_ON);
+    lv_slider_set_range(slider, 0, 100);
+    lv_obj_set_size(slider, 100, 10);
+    lv_obj_center(slider);
+    lv_obj_add_event_cb(slider, slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    xSemaphoreGive(lvgl_mutex);
 
     ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
     while (true)
