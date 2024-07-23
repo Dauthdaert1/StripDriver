@@ -217,11 +217,44 @@ void init_display(){
 }
 
 /**
+ * Convert to bgr565
+ * Must be called before swapping endianness or You're Fucked
+ */
+static void rgb_to_bgr565(void * buf, uint32_t buf_size_px){
+    uint32_t u32_cnt = buf_size_px / 2;
+    uint16_t * buf16 = buf;
+    uint32_t * buf32 = buf;
+
+    while(u32_cnt >= 8) {
+        buf32[0] = ((buf32[0] & 0xf800f800) >> 11) | (buf32[0] & 0x07e007e0) | ((buf32[0] & 0x001f001f) << 11);
+        buf32[1] = ((buf32[1] & 0xf800f800) >> 11) | (buf32[1] & 0x07e007e0) | ((buf32[1] & 0x001f001f) << 11);
+        buf32[2] = ((buf32[2] & 0xf800f800) >> 11) | (buf32[2] & 0x07e007e0) | ((buf32[2] & 0x001f001f) << 11);
+        buf32[3] = ((buf32[3] & 0xf800f800) >> 11) | (buf32[3] & 0x07e007e0) | ((buf32[3] & 0x001f001f) << 11);
+        buf32[4] = ((buf32[4] & 0xf800f800) >> 11) | (buf32[4] & 0x07e007e0) | ((buf32[4] & 0x001f001f) << 11);
+        buf32[5] = ((buf32[5] & 0xf800f800) >> 11) | (buf32[5] & 0x07e007e0) | ((buf32[5] & 0x001f001f) << 11);
+        buf32[6] = ((buf32[6] & 0xf800f800) >> 11) | (buf32[6] & 0x07e007e0) | ((buf32[6] & 0x001f001f) << 11);
+        buf32[7] = ((buf32[7] & 0xf800f800) >> 11) | (buf32[7] & 0x07e007e0) | ((buf32[7] & 0x001f001f) << 11);
+        buf32 += 8;
+        u32_cnt -= 8;
+    }
+
+    while(u32_cnt) {
+        *buf32 = ((*buf32 & 0xf800f800) >> 11) | (*buf32 & 0x07e007e0) | ((*buf32 & 0x001f001f) << 11);
+        buf32++;
+        u32_cnt--;
+    }
+
+    if(buf_size_px & 0x1) {
+        uint32_t e = buf_size_px - 1;
+        buf16[e] = ((buf16[e] & 0xf800) >> 11) | (buf16[e] & 0x07e0) | ((buf16[e] & 0x001f) << 11);
+    }
+}
+
+/**
  * Implementation of function to print the buffer in px_map to the display to be called by LVGL
  * Following implementation in: https://docs.lvgl.io/master/porting/display.html#flush-cb
  */
 void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned char * px_map){
-
     //Set column space to put data
     spi_send_cmd(0x2A);
     uint8_t data_x[4] = {0, area->x1, 0, area->x2};     //Beware Little Endian
@@ -231,6 +264,18 @@ void display_flush_cb(lv_display_t * display, const lv_area_t * area, unsigned c
     spi_send_cmd(0x2B);
     uint8_t data_y[4] = {0, area->y1, 0, area->y2};
     spi_send_data(data_y, 4);
+
+    
+    uint8_t* buf = px_map;
+    ESP_LOGI(TAG, "1: %x.%x", buf[0], buf[1]);
+    rgb_to_bgr565(px_map, BUFFER_SIZE/2); 
+    ESP_LOGI(TAG, "2: %x.%x", buf[0], buf[1]);
+    lv_draw_sw_rgb565_swap(px_map, BUFFER_SIZE/2);//Swap with little endian
+    
+    
+    ESP_LOGI(TAG, "3: %x.%x", buf[0], buf[1]);
+
+    ESP_LOGI(TAG, "4: %x", ((0x1f & 0x001f) << 11));
 
     //Flush buffer into data
     spi_send_cmd(0x2C);
@@ -398,6 +443,8 @@ static void disp_spi_send_data(void * data, uint32_t size){
  */
 static void spi_send_data_async(void * data, uint32_t size){
     spi_wait_queued();
+
+    
 
     gpio_set_level(PIN_NUM_DC, 1);
     spi_transaction_t *t = (spi_transaction_t*) malloc(sizeof(spi_transaction_t));

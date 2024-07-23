@@ -32,27 +32,42 @@ led_strip_spi_config_t spi_config = {
     .spi_bus = SPI2_HOST,   // SPI bus ID
 };
 
+static void slider_event_cb(lv_event_t * e)
+{
+    lv_obj_t * slider = lv_event_get_target(e);
+    set_brightness((uint8_t) lv_slider_get_value(slider));
+}
+
 void app_main(void)
 {
     lv_init();
     init_display();
     
-    set_brightness(10);
+    set_brightness(100);
 
     /*Change the active screen's background color*/
-    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_color_t color = lv_color_hex(0x0000FF);
+    printf("Red: %u\n", color.red);
+    printf("Green: %u\n", color.green);
+    printf("Blue: %u\n", color.blue);
+    
+
+
+    lv_obj_set_style_bg_color(lv_screen_active(), color, LV_PART_MAIN);
+    ESP_LOGI(TAG, "4");
 
     /*Create a white label, set its text and align it to the center*/
-    lv_obj_t * label = lv_label_create(lv_screen_active());
-    lv_label_set_text(label, "Hello world");
-    lv_obj_set_style_text_color(lv_screen_active(), lv_color_hex(0xffffff), LV_PART_MAIN);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
-    lv_example_slider_1();
-    
-    while(true){
-        
-    }
+    //lv_obj_t * label = lv_label_create(lv_screen_active());
+    //lv_label_set_text(label, "Hello world");
+    //lv_obj_set_style_text_color(lv_screen_active(), lv_color_hex(0xffffff), LV_PART_MAIN);
+    //lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
 
+    //lv_obj_t * slider = lv_slider_create(lv_screen_active());
+    //lv_slider_set_value(slider, 10, LV_ANIM_ON);
+    //lv_slider_set_range(slider, 0, 100);
+    //lv_obj_set_size(slider, 100, 10);
+    //lv_obj_center(slider);
+    //lv_obj_add_event_cb(slider, slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
     while (true)
