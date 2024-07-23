@@ -9,6 +9,8 @@
 #include "lvgl.h"
 #include "display_driver.h"
 #include "home.h"
+#include "strip_brightness.h"
+#include "globals.h"
 
 /* Use project configuration menu (idf.py menuconfig) to choose the GPIO to blink,
    or you can edit the following line and set a number here.
@@ -16,9 +18,6 @@
 #define BLINK_GPIO 14
 
 static const char *TAG = "LED_STRIP";
-static led_strip_handle_t led_strip;
-static SemaphoreHandle_t lvgl_mutex;
-
 
 /* LED strip initialization with the GPIO and pixels number*/
 led_strip_config_t strip_config = {
@@ -39,7 +38,7 @@ led_strip_spi_config_t spi_config = {
 
 void app_main(void)
 {
-    lvgl_mutex = xSemaphoreCreateMutex();
+    init_globals();
     if (lvgl_mutex == NULL) {
         printf("Mutex creation failed\n");
         return;
@@ -47,26 +46,24 @@ void app_main(void)
 
     lv_init();
     init_display(&lvgl_mutex);
-    
-    set_brightness(100);
-
-    /*Change the active screen's background color*/
-    lv_color_t color = lv_color_hex(0xFFFFFF);
-    while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
-    lv_screen_load(create_home());
-    xSemaphoreGive(lvgl_mutex);
 
     ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
+    led_strip_clear(led_strip);
+    led_strip_set_pixel(led_strip, 0, 255, 0, 0);
+    led_strip_set_pixel(led_strip, 1, 255, 0, 0);
+
+    //Set Start Screen
+    while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
+    lv_screen_load(create_brightness());
+    xSemaphoreGive(lvgl_mutex);
+
+    set_brightness(100);
+
     while (true)
     {
-        led_strip_clear(led_strip);
+        while(xSemaphoreTake(led_strip_mutex, portMAX_DELAY) !=pdTRUE);
         led_strip_refresh(led_strip);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        led_strip_set_pixel(led_strip, 0, 255, 0, 0);
-        led_strip_refresh(led_strip);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        led_strip_set_pixel(led_strip, 1, 255, 0, 0);
-        led_strip_refresh(led_strip);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        xSemaphoreGive(led_strip_mutex);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
     }
 }

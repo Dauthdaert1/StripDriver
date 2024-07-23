@@ -300,11 +300,11 @@ static void display_flush_cb(lv_display_t * display, const lv_area_t * area, uns
     spi_send_data(data_y, 4);
 
     //Reconfigure buffer for correct printing
-    rgb_to_bgr565(px_map, BUFFER_SIZE/2); 
+    rgb_to_bgr565(px_map, (1+area->x2-area->x1)*(1+area->y2-area->y1)); 
 
     //Flush buffer into LCD
     spi_send_cmd(0x2C);
-    spi_send_data_async(px_map, BUFFER_SIZE);
+    spi_send_data_async(px_map, (1+area->x2-area->x1)*(1+area->y2-area->y1)*2);
 
     //Let LVGL know flush is starting
     lv_display_flush_ready(display);

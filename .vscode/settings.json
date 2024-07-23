@@ -43,6 +43,10 @@
         "ledc.h": "c",
         "algorithm": "c",
         "semphr.h": "c",
-        "stdio.h": "c"
+        "stdio.h": "c",
+        "freertos.h": "c",
+        "home.h": "c",
+        "globals.h": "c",
+        "strip_brightness.h": "c"
     }
 }

@@ -56,7 +56,6 @@
  * @brief Initalizes GPIO and LVGL to work with display for display and touch controller.
  * @note lv_init() must be called before calling this
  * @note For GC9A01 LCD Controller and CST816S Touch Controller
- * @param mutex Pointer to Mutex lock for LVGL to ensure no concurrent execution
 */
 void init_display(SemaphoreHandle_t * mutex);
 
