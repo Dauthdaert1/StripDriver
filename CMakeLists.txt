@@ -6,3 +6,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(StripExample)
 
 list(APPEND EXTRA_COMPONENT_DIRS "components/display_drivers")
+
+include_directories(${CMAKE_SOURCE_DIR})

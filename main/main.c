@@ -1,3 +1,4 @@
+#include "lvgl.h"
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -6,7 +7,6 @@
 #include "esp_log.h"
 #include "led_strip.h"
 #include "sdkconfig.h"
-#include "lvgl.h"
 #include "display_driver.h"
 #include "home.h"
 #include "strip_brightness.h"
@@ -18,6 +18,7 @@
 #define BLINK_GPIO 14
 
 static const char *TAG = "LED_STRIP";
+
 
 /* LED strip initialization with the GPIO and pixels number*/
 led_strip_config_t strip_config = {
@@ -54,7 +55,7 @@ void app_main(void)
 
     //Set Start Screen
     while(xSemaphoreTake(lvgl_mutex, portMAX_DELAY) !=pdTRUE);
-    lv_screen_load(create_brightness());
+    lv_screen_load(create_home());
     xSemaphoreGive(lvgl_mutex);
 
     set_brightness(100);

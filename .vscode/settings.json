@@ -47,6 +47,9 @@
         "freertos.h": "c",
         "home.h": "c",
         "globals.h": "c",
-        "strip_brightness.h": "c"
+        "strip_brightness.h": "c",
+        "task.h": "c",
+        "lv_conf.h": "c",
+        "lv_init.h": "c"
     }
 }
