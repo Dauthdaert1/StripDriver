@@ -21,8 +21,6 @@ typedef struct {
     uint8_t databytes; //Bytes of data
 } lcd_init_cmd_t;
 
-
-
 /*=======================
    File Static Variables  
   =======================*/
@@ -244,8 +242,9 @@ void init_display(SemaphoreHandle_t * mutex){
     display = lv_display_create(DISPLAY_WIDTH, DISPLAY_HEIGHT);
     lv_display_set_flush_cb(display, display_flush_cb);
 
-    uint8_t* dma_buffer1 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
-    uint8_t* dma_buffer2 = (uint8_t*) heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA);
+    void* dma_buffer1 = (void*) heap_caps_aligned_alloc(32, BUFFER_SIZE, MALLOC_CAP_DMA);
+    void* dma_buffer2 = (void*) heap_caps_aligned_alloc(32, BUFFER_SIZE, MALLOC_CAP_DMA);
+
     lv_display_set_buffers(display, dma_buffer1, dma_buffer2, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     //Set Timing callback
@@ -299,12 +298,14 @@ static void display_flush_cb(lv_display_t * display, const lv_area_t * area, uns
     uint8_t data_y[4] = {0, area->y1, 0, area->y2};
     spi_send_data(data_y, 4);
 
+    uint32_t size = lv_area_get_size(area);
     //Reconfigure buffer for correct printing
-    rgb_to_bgr565(px_map, (1+area->x2-area->x1)*(1+area->y2-area->y1)); 
+    rgb_to_bgr565(px_map, size);
 
     //Flush buffer into LCD
     spi_send_cmd(0x2C);
-    spi_send_data_async(px_map, (1+area->x2-area->x1)*(1+area->y2-area->y1)*2);
+    spi_send_data_async((void*)px_map, size*2);
+    
 
     //Let LVGL know flush is starting
     lv_display_flush_ready(display);
@@ -341,8 +342,10 @@ static void rgb_to_bgr565(void * buf, uint32_t buf_size_px){
     }
 
     if(buf_size_px & 0x1) {
-        uint32_t e = buf_size_px - 1;
-        buf16[e] = ((buf16[e] & 0xf800) >> 3) | ((buf16[e] & 0x0700) >> 8) | ((buf16[e] & 0x00e0) << 8) | ((buf16[e] & 0x001f) << 3);
+        *buf32 = ((*buf32 & 0xf800f800) >> 3) | ((*buf32 & 0x07000700) >> 8) | ((*buf32 & 0x00e000e0) << 8) | ((*buf32 & 0x001f001f) << 3);
+        //*buf32 = ((((*buf32 & 0xf800f800) >> 3) | ((*buf32 & 0x07000700) >> 8) | ((*buf32 & 0x00e000e0) << 8) | ((*buf32 & 0x001f001f) << 3))&0xFFFF0000)>>16;
+        //uint32_t e = buf_size_px - 1;
+        //buf16[e] = ((buf16[e] & 0xf800) >> 3) | ((buf16[e] & 0x0700) >> 8) | ((buf16[e] & 0x00e0) << 8) | ((buf16[e] & 0x001f) << 3);
     }
 }
 

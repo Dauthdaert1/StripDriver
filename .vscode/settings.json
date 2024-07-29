@@ -50,6 +50,7 @@
         "strip_brightness.h": "c",
         "task.h": "c",
         "lv_conf.h": "c",
-        "lv_init.h": "c"
+        "lv_init.h": "c",
+        "charconv": "c"
     }
 }
