@@ -44,7 +44,7 @@
 
 /* Frame buffers 1/10th the size of screen to reduce ram
  * Multiply by 2 for 16 bit color mapping */
-#define BUFFER_SIZE 2*DISPLAY_WIDTH*DISPLAY_HEIGHT/10
+#define BUFFER_SIZE 2*DISPLAY_WIDTH*DISPLAY_HEIGHT/5
 
 
 

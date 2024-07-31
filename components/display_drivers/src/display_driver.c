@@ -24,11 +24,11 @@ typedef struct {
 /*=======================
    File Static Variables  
   =======================*/
+static const char *TAG = "DISPLAY_DRIVER";
 static spi_device_handle_t spi;
 static i2c_master_bus_handle_t i2c;
 static i2c_master_dev_handle_t i2c_dev;
 static lv_display_t * display;
-static const char *TAG = "DISPLAY_DRIVER";
 static uint8_t queue_cnt;
 static SemaphoreHandle_t * lvgl_mutex;
 
@@ -342,10 +342,8 @@ static void rgb_to_bgr565(void * buf, uint32_t buf_size_px){
     }
 
     if(buf_size_px & 0x1) {
+        //Buffer is always large enough that this is not an issue
         *buf32 = ((*buf32 & 0xf800f800) >> 3) | ((*buf32 & 0x07000700) >> 8) | ((*buf32 & 0x00e000e0) << 8) | ((*buf32 & 0x001f001f) << 3);
-        //*buf32 = ((((*buf32 & 0xf800f800) >> 3) | ((*buf32 & 0x07000700) >> 8) | ((*buf32 & 0x00e000e0) << 8) | ((*buf32 & 0x001f001f) << 3))&0xFFFF0000)>>16;
-        //uint32_t e = buf_size_px - 1;
-        //buf16[e] = ((buf16[e] & 0xf800) >> 3) | ((buf16[e] & 0x0700) >> 8) | ((buf16[e] & 0x00e0) << 8) | ((buf16[e] & 0x001f) << 3);
     }
 }
 
@@ -463,10 +461,19 @@ static void disp_spi_send_data(void * data, uint32_t size){
 static void spi_send_data_async(void * data, uint32_t size){
     spi_wait_queued();
 
+    /*
+    I don't know why this is, but if padded_length is not accounted for,
+    when rendering a buffer with an odd amount of pixels inside, the 7th pixel 
+    from the end of the buffer can misrender, and does about 50% of the time
+    for no appearent reason. I don't know why the 7th pixel misrenders but somehow
+    making the tx_buffer slightly longer on odd pixel counts fixes this ¯\_(ツ)_/¯
+    */
+    size_t padded_length = size + (4 - (size % 4)) % 4;
+
     gpio_set_level(PIN_NUM_DC, 1);
     spi_transaction_t *t = (spi_transaction_t*) malloc(sizeof(spi_transaction_t));
     memset(t, 0, sizeof(spi_transaction_t));        // Zero out the transaction
-    t->length = size * 8;                           // Data length in bits
+    t->length = padded_length * 8;                           // Data length in bits
     t->tx_buffer = data;                            // The data to be sent
     t->user = (void*)1;                             // D/C needs to be set to 1
 
