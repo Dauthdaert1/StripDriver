@@ -319,7 +319,6 @@ static void display_flush_cb(lv_display_t * display, const lv_area_t * area, uns
  */
 static void rgb_to_bgr565(void * buf, uint32_t buf_size_px){
     uint32_t u32_cnt = buf_size_px / 2;
-    uint16_t * buf16 = buf;
     uint32_t * buf32 = buf;
 
     while(u32_cnt >= 8) {
@@ -468,7 +467,7 @@ static void spi_send_data_async(void * data, uint32_t size){
     for no appearent reason. I don't know why the 7th pixel misrenders but somehow
     making the tx_buffer slightly longer on odd pixel counts fixes this ¯\_(ツ)_/¯
     */
-    size_t padded_length = size + (4 - (size % 4)) % 4;
+    size_t padded_length = size + (size % 4);
 
     gpio_set_level(PIN_NUM_DC, 1);
     spi_transaction_t *t = (spi_transaction_t*) malloc(sizeof(spi_transaction_t));

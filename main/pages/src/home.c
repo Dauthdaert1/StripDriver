@@ -81,14 +81,20 @@ lv_obj_t* create_home(void){
     //lv_obj_add_event_cb(arc, arc_event_handler, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(arc, value_changed_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    static lv_style_t btn_style;
-    lv_style_init(&btn_style);
-    lv_style_set_bg_color(&btn_style, lv_color_hex(0xBBBBBB));
-    lv_style_set_radius(&btn_style, 200);
+    static lv_style_t btn_style_off;
+    lv_style_init(&btn_style_off);
+    lv_style_set_bg_color(&btn_style_off, lv_color_hex(0xBBBBBB));
+    lv_style_set_radius(&btn_style_off, 200);
+
+    static lv_style_t btn_style_on;
+    lv_style_init(&btn_style_on);
+    lv_style_set_bg_color(&btn_style_on, lv_color_hex(0x00c5ff));
+    //lv_style_set_radius(&btn_style_off, 200);
 
 
     lv_obj_t * btn1 = lv_button_create(page);
-    lv_obj_add_style(btn1, &btn_style, 0);
+    lv_obj_add_style(btn1, &btn_style_off, 0);
+    lv_obj_add_style(btn1, &btn_style_on, LV_STATE_CHECKED);
     lv_obj_set_size(btn1, 90, 90);
     lv_obj_add_event_cb(btn1, power_handler, LV_EVENT_ALL, NULL);
     lv_obj_add_flag(btn1, LV_OBJ_FLAG_CHECKABLE);
@@ -107,7 +113,7 @@ lv_obj_t* create_home(void){
     lv_obj_center(label1);
 
     lv_obj_t * btn2 = lv_button_create(page);
-    lv_obj_add_style(btn2, &btn_style, 0);
+    lv_obj_add_style(btn2, &btn_style_off, 0);
     lv_obj_set_size(btn2, 50, 50);
     //lv_obj_add_flag(btn2, LV_OBJ_FLAG_HIDDEN);
     //lv_obj_add_event_cb(btn2, power_handler, LV_EVENT_ALL, NULL);
