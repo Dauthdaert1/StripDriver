@@ -1,5 +1,5 @@
-#ifndef DISPLAY_DRIVER_H
-#define DISPLAY_DRIVER_H
+#ifndef LED_DRIVER_H
+#define LED_DRIVER_H
 
 #include "led_strip.h"
 
@@ -12,7 +12,8 @@
 /*========================*
    Configuration Settings
  *========================*/
-#define STRIP_SPI     SPI2_HOST
+#define STRIP_SPI       SPI2_HOST
+#define UPDATE_RATE_MS  50
 
 /*==========*
    Typedefs
@@ -73,5 +74,11 @@ void set_strip_brightness(uint8_t brightness);
  * @returns Brightness value 0-255
  */
 uint8_t get_strip_brightness();
+
+/**
+ * @brief Call periodically to update LEDs
+ * @returns Time to wait for next call (in ms)
+ */
+uint32_t strip_timer_handler();
 
 #endif

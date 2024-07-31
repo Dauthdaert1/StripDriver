@@ -1,16 +1,14 @@
 #include "strip_brightness.h"
 #include "lvgl.h"
 #include "globals.h"
+#include "led_driver.h"
 
 static void value_changed_event_cb(lv_event_t * e)
 {
     lv_obj_t * arc = lv_event_get_target(e);
     lv_obj_t * label = lv_event_get_user_data(e);
     uint8_t brightness = lv_arc_get_value(arc);
-    while(xSemaphoreTake(led_strip_mutex, portMAX_DELAY) !=pdTRUE);
-    led_strip_set_pixel(led_strip, 0, brightness, 0, 0);
-    led_strip_set_pixel(led_strip, 1, brightness, 0, 0);
-    xSemaphoreGive(led_strip_mutex);
+    set_strip_brightness(brightness*(255.0/100));
 
     lv_label_set_text_fmt(label, "%" LV_PRId32 "%%", lv_arc_get_value(arc));
 

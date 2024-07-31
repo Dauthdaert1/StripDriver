@@ -5,7 +5,7 @@
 #include "freertos/semphr.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
-#include "led_strip.h"
+#include "led_driver.h"
 #include "sdkconfig.h"
 #include "display_driver.h"
 #include "home.h"
@@ -32,11 +32,25 @@ void app_main(void)
 
     set_brightness(100);
 
+    //Start LED Strip with 3 leds
+    init_strip(3);
+
+    led_color_t color1 = {
+        .red = 0,
+        .green = 255,
+        .blue = 0,
+    };
+
+    led_display_t mode = {
+        .mode = SOLID_COLOR,
+        .color1 = color1,
+    };
+
+    set_strip(&mode);
+
     while (true)
     {
-        while(xSemaphoreTake(led_strip_mutex, portMAX_DELAY) !=pdTRUE);
-        led_strip_refresh(led_strip);
-        xSemaphoreGive(led_strip_mutex);
-        vTaskDelay(50 / portTICK_PERIOD_MS);
+        uint32_t wait = strip_timer_handler();
+        vTaskDelay(wait / portTICK_PERIOD_MS);
     }
 }
